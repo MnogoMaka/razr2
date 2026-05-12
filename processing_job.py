@@ -1,50 +1,3 @@
-#!/usr/bin/env python3
-"""
-processing_job.py (ансамбль из нескольких YOLO-моделей)
-
-Для КАЖДОГО файла в ./processing:
-
-  1) Ищет запись в renovation_ii.cam_photos по name = имени файла.
-  2) Берёт cam_name.
-  3) В renovation_ii.echd_camera_solr_dds ищет строку, где shortname = cam_name,
-     получает поле cameras (dict), вытаскивает из него lat/lng.
-  4) Прогоняет файл через НЕСКОЛЬКО YOLO‑классификаторов, получает cls_id (0/1) от
-     каждой модели и берёт итоговый класс по большинству голосов.
-  5) Если итоговый cls_id == 1, проверяет законность разрытия:
-
-       - Берём все ордера из renovation_ii.table_oati_uved_order_raskopki
-         с условиями:
-             "Виды работ" IS NOT NULL
-             "Статус" = 'Действует'
-             wkt уникален
-
-       - Считаем разрытие законным, если координата камеры:
-           * лежит внутри какого‑то ордера (в WGS84),
-           * ИЛИ находится не дальше DISTANCE_TOLERANCE_M метров
-             от полигона ордера (расчёт расстояния в проекции EPSG:3857).
-
-  6) Записывает результат в renovation_ii.cam_photos:
-       label    = итоговый cls_id по большинству моделей
-       decision = 0, если label == 0
-       decision = 0, если label == 1 и разрытие законно
-       decision = 1, если label == 1 и разрытие незаконно
-
-ДОПОЛНЕНИЕ:
-
-  При повторном запуске:
-    - если у фото в cam_photos уже заполнены label И decision,
-      это фото пропускается и не обрабатывается повторно.
-
-Настраиваемый параметр:
-
-  DISTANCE_TOLERANCE_M — допуск по расстоянию от ордера в метрах.
-    0   → только внутри ордера.
-    100 → внутри ордера или не дальше 100 м от его границы.
-
-.env:
-  DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD
-"""
-
 import os
 import logging
 from pathlib import Path
@@ -71,8 +24,8 @@ log = logging.getLogger(__name__)
 
 # ─── Конфиг ──────────────────────────────────────────────────────────────────
 
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_PORT = os.getenv("DB_PORT", "5432")
+DB_HOST = os.getenv("DB_HOST", "")
+DB_PORT = os.getenv("DB_PORT", "")
 DB_NAME = os.getenv("DB_NAME", "")
 DB_USER = os.getenv("DB_USER", "")
 DB_PASS = os.getenv("DB_PASSWORD", "")

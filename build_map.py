@@ -1,23 +1,3 @@
-#!/usr/bin/env python3
-"""
-build_map_from_db.py
-
-Строит интерактивную карту (db_map.html) по данным из БД:
-
-  - полигоны ордеров из renovation_ii.table_oati_uved_order_raskopki
-    ("Виды работ" IS NOT NULL, "Статус" = 'Действует', уникальные wkt),
-  - камеры/фото из renovation_ii.cam_photos, для которых уже заполнены
-    поля label и decision.
-
-Цвет маркеров:
-  - label = 0                      → синий  (разрытия нет)
-  - label = 1 и decision = 0       → зелёный (разрытие законное)
-  - label = 1 и decision = 1       → красный (разрытие незаконное)
-
-Камеры маппятся на координаты через renovation_ii.echd_camera_solr_dds.cameras
-(precise_latitude/precise_longitude или lat/lng).
-"""
-
 import os
 import logging
 from pathlib import Path
@@ -40,18 +20,13 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-# ─── Конфиг ──────────────────────────────────────────────────────────────────
-
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_PORT = os.getenv("DB_PORT", "5432")
+DB_HOST = os.getenv("DB_HOST", "")
+DB_PORT = os.getenv("DB_PORT", "")
 DB_NAME = os.getenv("DB_NAME", "")
 DB_USER = os.getenv("DB_USER", "")
 DB_PASS = os.getenv("DB_PASSWORD", "")
 
 OUTPUT_HTML = Path("db_map.html")
-
-
-# ─── БД ──────────────────────────────────────────────────────────────────────
 
 def get_db_conn():
     if not DB_NAME or not DB_USER:
@@ -64,16 +39,7 @@ def get_db_conn():
         password=DB_PASS,
     )
 
-
-# ─── Ордеры ──────────────────────────────────────────────────────────────────
-
 def load_active_orders(conn) -> Tuple[List[object], Optional[STRtree]]:
-    """
-    Загружает законные ордера:
-      - "Виды работ" IS NOT NULL
-      - "Статус" = 'Действует'
-    Берет уникальные wkt и строит STRtree.
-    """
     with conn.cursor(cursor_factory=DictCursor) as cur:
         cur.execute("""
             SELECT DISTINCT wkt
@@ -103,14 +69,7 @@ def load_active_orders(conn) -> Tuple[List[object], Optional[STRtree]]:
     log.info(f"Ордеров для карты: {len(geoms)}")
     return geoms, tree
 
-
-# ─── Камеры/фото ─────────────────────────────────────────────────────────────
-
 def parse_cameras_lat_lng(cameras_value) -> Optional[Tuple[float, float]]:
-    """
-    cameras_value уже dict (psycopg2 json/jsonb -> dict) или строка.
-    Берём precise_latitude/precise_longitude или lat/lng.
-    """
     if isinstance(cameras_value, dict):
         data = cameras_value
     else:
@@ -136,21 +95,6 @@ def parse_cameras_lat_lng(cameras_value) -> Optional[Tuple[float, float]]:
 
 
 def load_checked_photos(conn) -> List[dict]:
-    """
-    Грузит фото, по которым уже есть результат проверки (label IS NOT NULL, decision IS NOT NULL)
-    из cam_photos и соответствующие координаты камер.
-
-    Возвращает список dict:
-      {
-        "name": <имя файла>,
-        "cam_name": <строковое имя камеры>,
-        "label": <int>,
-        "decision": <int>,
-        "lat": <float>,
-        "lng": <float>
-      }
-    """
-
     with conn.cursor(cursor_factory=DictCursor) as cur:
         cur.execute("""
             SELECT id, name, cam_name, label, decision
@@ -212,18 +156,7 @@ def load_checked_photos(conn) -> List[dict]:
     log.info(f"Фото для карты (label/decision заполнены): {len(result)}")
     return result
 
-
-# ─── Построение карты ───────────────────────────────────────────────────────
-
 def build_map(photos: List[dict], geoms: List[object]):
-    """ba
-    Строит карту folium по:
-      - geoms: полигоны ордеров
-      - photos: фото/камеры с label/decision
-
-    Рисуем только точки, где label = 1.
-    """
-
     if photos:
         avg_lat = sum(p["lat"] for p in photos) / len(photos)
         avg_lng = sum(p["lng"] for p in photos) / len(photos)
@@ -300,9 +233,6 @@ def build_map(photos: List[dict], geoms: List[object]):
     m.save(str(OUTPUT_HTML))
     log.info(f"Карта по данным БД сохранена в {OUTPUT_HTML.resolve()}")
 
-
-
-# ─── main ────────────────────────────────────────────────────────────────────
 
 def main():
     conn = get_db_conn()

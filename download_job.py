@@ -1,20 +1,3 @@
-#!/usr/bin/env python3
-"""
-download_from_db.py
-
-Берёт записи из renovation_ii.cam_photos и скачивает фотографии по link
-в локальную папку ./processing под именем name.
-
-Скачиваем только те записи, где label IS NULL и decision IS NULL.
-
-Настройки через .env:
-  DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD
-
-Запуск примеров:
-  python download_from_db.py              # скачать все подходящие
-  python download_from_db.py 100          # скачать только 100 штук
-"""
-
 import os
 import sys
 import logging
@@ -29,8 +12,8 @@ load_dotenv()
 
 # ─── Конфиг ──────────────────────────────────────────────────────────────────
 
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_PORT = os.getenv("DB_PORT", "5432")
+DB_HOST = os.getenv("DB_HOST", "")
+DB_PORT = os.getenv("DB_PORT", "")
 DB_NAME = os.getenv("DB_NAME", "")
 DB_USER = os.getenv("DB_USER", "")
 DB_PASS = os.getenv("DB_PASSWORD", "")
@@ -46,8 +29,6 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
-# ─── Подключение к БД ────────────────────────────────────────────────────────
-
 def get_db_conn():
     if not DB_NAME or not DB_USER:
         raise RuntimeError("DB_NAME/DB_USER не заданы в .env")
@@ -60,17 +41,11 @@ def get_db_conn():
     )
 
 
-# ─── Работа с файлами ────────────────────────────────────────────────────────
-
 def ensure_processing_dir():
     PROCESSING_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def download_file(url: str, dest: Path) -> bool:
-    """
-    Скачивает файл по URL в dest с потоковой записью.
-    Возвращает True при успехе.
-    """
     try:
         with requests.get(url, stream=True, timeout=DOWNLOAD_TIMEOUT) as resp:
             resp.raise_for_status()
@@ -88,11 +63,6 @@ def download_file(url: str, dest: Path) -> bool:
 # ─── Основная логика ─────────────────────────────────────────────────────────
 
 def fetch_rows(conn, limit: int | None):
-    """
-    Возвращает список записей из renovation_ii.cam_photos
-    с полями name, link, ТОЛЬКО где label IS NULL и decision IS NULL.
-    Если limit=None — без ограничения.
-    """
     with conn.cursor(cursor_factory=DictCursor) as cur:
         if limit is None:
             cur.execute("""
@@ -115,15 +85,6 @@ def fetch_rows(conn, limit: int | None):
 
 
 def sync_from_db(limit: int | None = None):
-    """
-    Скачивает файлы по ссылкам из БД в папку processing.
-
-    Берём только строки, где label IS NULL и decision IS NULL.
-
-    limit:
-      * None — скачать все такие записи
-      * число — скачать не более указанного количества
-    """
     log.info("=== Загрузка файлов (label IS NULL, decision IS NULL) в ./processing ===")
     ensure_processing_dir()
 

@@ -1,22 +1,3 @@
-#!/usr/bin/env python3
-"""
-sync_bucket_to_db.py
-
-Сканирует Yandex Cloud Object Storage (бакет kube-cxm-cni),
-находит новые фотографии под
-  pvc-a6daa919-5f6c-4bca-8838-7d3f103e5fae/cctv/day/...
-и записывает их в таблицу renovation_ii.cam_photos PostgreSQL.
-
-Поля таблицы cam_photos:
-  id       SERIAL PRIMARY KEY
-  name     TEXT NOT NULL UNIQUE  -- "{cam}_{YYYY-MM-DD}.ext"
-  cam_name TEXT NOT NULL         -- имя камеры, например: AVVOK_SAO_189_230
-  date     DATE                  -- дата фото (если удалось вытащить)
-  label    INTEGER               -- NULL, заполняется моделью
-  decision INTEGER               -- NULL, заполняется моделью
-  link     TEXT NOT NULL         -- прямая ссылка на объект в бакете
-"""
-
 import os
 import re
 import time
@@ -36,8 +17,8 @@ load_dotenv()
 
 OAUTH_TOKEN = os.getenv("OAUTH_TOKEN", "").strip()
 
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_PORT = os.getenv("DB_PORT", "5432")
+DB_HOST = os.getenv("DB_HOST", "")
+DB_PORT = os.getenv("DB_PORT", "")
 DB_NAME = os.getenv("DB_NAME", "")
 DB_USER = os.getenv("DB_USER", "")
 DB_PASS = os.getenv("DB_PASSWORD", "")
