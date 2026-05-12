@@ -1,0 +1,7 @@
+psycopg2-binary
+python-dotenv
+folium
+shapely
+requests
+ultralytics
+pyproj
