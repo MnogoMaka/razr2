@@ -187,7 +187,7 @@ def find_new_image_items(
 
             yield {
                 "key":  key,
-                "cam":  cam_name,   # например: AVVOK_SAO_189_230
+                "cam":  cam_name,
                 "date": photo_date,
                 "name": name,
                 "link": make_link(key),
@@ -218,7 +218,25 @@ def get_db_conn():
     )
 
 
+def _table_columns(conn, table: str) -> set[str]:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'renovation_ii' AND table_name = %s;
+            """,
+            (table,),
+        )
+        return {r[0] for r in cur.fetchall()}
+
+
 def ensure_table(conn):
+    """
+    Создаёт/обновляет renovation_ii.cam_photos:
+      is_opening, is_legal (BOOLEAN), actual, order_coord (JSONB), description (TEXT).
+    Мигрирует данные из устаревших label/decision (INTEGER), если они ещё есть.
+    """
     with conn.cursor() as cur:
         cur.execute("CREATE SCHEMA IF NOT EXISTS renovation_ii;")
 
@@ -226,22 +244,74 @@ def ensure_table(conn):
             CREATE TABLE IF NOT EXISTS renovation_ii.cam_photos (
                 id       SERIAL PRIMARY KEY,
                 name     TEXT NOT NULL UNIQUE,
-                cam_name TEXT NOT NULL,
+                cam_name TEXT NOT NULL DEFAULT '',
                 date     DATE,
-                label    INTEGER,
-                decision INTEGER,
                 link     TEXT NOT NULL
             );
         """)
 
-        # Миграция: добавляем cam_name, если таблица уже существовала без неё
         cur.execute("""
             ALTER TABLE renovation_ii.cam_photos
                 ADD COLUMN IF NOT EXISTS cam_name TEXT NOT NULL DEFAULT '';
         """)
 
+        for ddl in (
+            "ALTER TABLE renovation_ii.cam_photos ADD COLUMN IF NOT EXISTS is_opening BOOLEAN",
+            "ALTER TABLE renovation_ii.cam_photos ADD COLUMN IF NOT EXISTS is_legal BOOLEAN",
+            "ALTER TABLE renovation_ii.cam_photos ADD COLUMN IF NOT EXISTS actual BOOLEAN",
+            "ALTER TABLE renovation_ii.cam_photos ADD COLUMN IF NOT EXISTS order_coord JSONB",
+            "ALTER TABLE renovation_ii.cam_photos ADD COLUMN IF NOT EXISTS description TEXT",
+        ):
+            cur.execute(ddl)
+
+        cols = _table_columns(conn, "cam_photos")
+        if "label" in cols:
+            log.info("Миграция cam_photos: label/decision → is_opening/is_legal")
+            cur.execute("""
+                UPDATE renovation_ii.cam_photos
+                SET is_opening = (label = 1)
+                WHERE label IS NOT NULL;
+            """)
+            cur.execute("""
+                UPDATE renovation_ii.cam_photos
+                SET is_legal = (decision = 0)
+                WHERE decision IS NOT NULL;
+            """)
+            cur.execute("ALTER TABLE renovation_ii.cam_photos DROP COLUMN IF EXISTS label;")
+            cur.execute("ALTER TABLE renovation_ii.cam_photos DROP COLUMN IF EXISTS decision;")
+
     conn.commit()
-    log.info("Таблица renovation_ii.cam_photos готова (cam_name присутствует)")
+    log.info(
+        "Таблица renovation_ii.cam_photos готова "
+        "(is_opening, is_legal, actual, order_coord, description)"
+    )
+
+
+def apply_actual_status(conn, *, update: bool = False) -> None:
+    """
+    Проставляет actual по полю date:
+      - date в пределах последних 60 дней от текущей даты → TRUE;
+      - иначе → FALSE;
+      - date NULL → actual NULL.
+
+    Выполняется только если ``update=True`` (иначе только лог и выход).
+    """
+    if not update:
+        log.info("apply_actual_status: update=False — поле actual не трогаем")
+        return
+
+    with conn.cursor() as cur:
+        cur.execute("""
+            UPDATE renovation_ii.cam_photos
+            SET actual = CASE
+                WHEN date IS NULL THEN NULL
+                WHEN date >= (CURRENT_DATE - INTERVAL '60 days') THEN TRUE
+                ELSE FALSE
+            END;
+        """)
+        n = cur.rowcount
+    conn.commit()
+    log.info("apply_actual_status: обновлено строк (actual): %s", n)
 
 
 def get_existing_names(conn) -> set[str]:
@@ -252,7 +322,7 @@ def get_existing_names(conn) -> set[str]:
 
 def insert_new_photos(conn, new_rows: list[tuple]):
     """
-    Каждый элемент new_rows: (name, cam_name, date, label, decision, link)
+    Каждый элемент new_rows: (name, cam_name, date, is_opening, is_legal, link)
     """
     if not new_rows:
         return
@@ -261,7 +331,7 @@ def insert_new_photos(conn, new_rows: list[tuple]):
             cur,
             """
             INSERT INTO renovation_ii.cam_photos
-                (name, cam_name, date, label, decision, link)
+                (name, cam_name, date, is_opening, is_legal, link)
             VALUES %s
             ON CONFLICT (name) DO NOTHING;
             """,
@@ -273,7 +343,12 @@ def insert_new_photos(conn, new_rows: list[tuple]):
 
 # ─── Основная логика ─────────────────────────────────────────────────────────
 
-def sync(limit_new: int | None = None, batch_size: int = 50):
+def sync(
+    limit_new: int | None = None,
+    batch_size: int = 50,
+    *,
+    apply_actual: bool = False,
+):
     """
     Синхронизация бакета → БД.
 
@@ -283,6 +358,10 @@ def sync(limit_new: int | None = None, batch_size: int = 50):
 
     batch_size:
       * размер батча для вставки в БД
+
+    apply_actual:
+      * если True — после синхронизации для всех строк cam_photos пересчитывается
+        поле ``actual`` по правилу «дата снимка не старше 60 дней от сегодня».
     """
     log.info("=== Синхронизация бакета → БД ===")
 
@@ -301,10 +380,9 @@ def sync(limit_new: int | None = None, batch_size: int = 50):
     total_new = 0
 
     for item in find_new_image_items(session, existing_names=existing, limit_new=limit_new):
-        # Порядок: (name, cam_name, date, label, decision, link)
         batch.append((
             item["name"],
-            item["cam"],    # AVVOK_SAO_189_230
+            item["cam"],
             item["date"],
             None,
             None,
@@ -321,10 +399,12 @@ def sync(limit_new: int | None = None, batch_size: int = 50):
         log.info(f"Финальный батч на {len(batch)} записей, пишем в БД")
         insert_new_photos(conn, batch)
 
+    apply_actual_status(conn, update=apply_actual)
+
     log.info(f"Всего новых фоток записано: {total_new}")
     conn.close()
     log.info("=== Готово ===")
 
 
 if __name__ == "__main__":
-    sync(batch_size=1000)
+    sync(batch_size=10000)

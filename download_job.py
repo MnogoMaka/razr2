@@ -68,16 +68,16 @@ def fetch_rows(conn, limit: int | None):
             cur.execute("""
                 SELECT name, link
                 FROM renovation_ii.cam_photos
-                WHERE label IS NULL
-                  AND decision IS NULL
+                WHERE is_opening IS NULL
+                  AND is_legal IS NULL
                 ORDER BY id;
             """)
         else:
             cur.execute("""
                 SELECT name, link
                 FROM renovation_ii.cam_photos
-                WHERE label IS NULL
-                  AND decision IS NULL
+                WHERE is_opening IS NULL
+                  AND is_legal IS NULL
                 ORDER BY id
                 LIMIT %s;
             """, (limit,))
@@ -85,7 +85,7 @@ def fetch_rows(conn, limit: int | None):
 
 
 def sync_from_db(limit: int | None = None):
-    log.info("=== Загрузка файлов (label IS NULL, decision IS NULL) в ./processing ===")
+    log.info("=== Загрузка файлов (is_opening IS NULL, is_legal IS NULL) в ./processing ===")
     ensure_processing_dir()
 
     conn = get_db_conn()

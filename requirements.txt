@@ -5,3 +5,5 @@ shapely
 requests
 ultralytics
 pyproj
+dash
+plotly

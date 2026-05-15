@@ -33,6 +33,8 @@ result_modelv3
 best.pt
 # C extensions
 *.so
+downloaded_illegalv2
+отправить
 
 # Distribution / packaging
 .Python
